@@ -47,6 +47,42 @@ the model useful and safe lives in the six pillars below.
         │                 └─────────────────────────────────────────────┘
 ```
 
+### Data flow (rendered)
+
+```mermaid
+flowchart TD
+    SRC["TelemetrySource<br/>(live run / simulated)"] -->|RunTelemetry snapshot| TICK
+
+    subgraph LOOP["THE LOOP — do something until the run ends"]
+        direction TB
+        TICK["tick"] --> IG{"Input guard<br/>telemetry sane?"}
+        IG -->|no| SKIP1["skip · trace"]
+        IG -->|yes| DERIVE["derive trigger<br/>start / split / zone / end"]
+        DERIVE -->|none| IDLE["idle"]
+        DERIVE --> RL{"rate-limited?<br/>30s cooldown"}
+        RL -->|yes, low-priority| SKIP2["skip · trace"]
+        RL -->|no / high-priority| CTX["build context"]
+        CTX --> LLM["LLM engine<br/>(Gemini 2.5 Flash)"]
+        LLM --> OG{"Output guard<br/>≤280 · no emoji · safe · not repeated"}
+        OG -->|block| SKIP3["skip · trace"]
+        OG -->|pass| SPEAK["TTS 🔊"]
+        SPEAK --> REM["remember line"]
+    end
+
+    MEM[("Memory<br/>persona · profile · session buffer")] --> CTX
+    REM --> MEM
+    TOOLS[["Tools<br/>pace_target · compare_to_pr · weather"]] --> CTX
+
+    SPEAK & SKIP1 & SKIP2 & SKIP3 -.->|trace| OBS[("Observability<br/>tokens · cost · latency · decision")]
+
+    classDef guard fill:#fde,stroke:#c39;
+    classDef engine fill:#def,stroke:#39c;
+    classDef store fill:#efe,stroke:#3a3;
+    class IG,OG,RL guard;
+    class LLM engine;
+    class MEM,OBS,TOOLS store;
+```
+
 ### 1. LLM — the engine
 - **Stateless.** Text in, text out. Knows nothing on its own.
 - Model: **Gemini 2.5 Flash** (parity with the production app).
