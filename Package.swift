@@ -18,5 +18,9 @@ let package = Package(
             name: "coachd",
             dependencies: ["RunCoachHarness"]
         ),
+        .testTarget(
+            name: "RunCoachHarnessTests",
+            dependencies: ["RunCoachHarness"]
+        ),
     ]
 )
