@@ -24,8 +24,10 @@ if let key = env["GEMINI_API_KEY"], !key.isEmpty {
     print("⚙️  engine: mock  (set GEMINI_API_KEY to use Gemini)")
 }
 
-// Persona: built-in id from the first arg, default motivational.
-let personaId = CommandLine.arguments.dropFirst().first
+// Flags + persona. `--agentic` runs the model-driven AgenticCoachLoop.
+let cliArgs = Array(CommandLine.arguments.dropFirst())
+let agentic = cliArgs.contains("--agentic")
+let personaId = cliArgs.first { !$0.hasPrefix("--") }
 let persona = CoachPersona.builtins.first { $0.id == personaId } ?? .motivational
 
 // Output: console by default; `say` aloud when COACH_SAY=1.
@@ -35,16 +37,45 @@ print("🏃 coach: \(persona.name) [\(persona.id)] · voice \(persona.voiceName)
 print("════════════════════════════════════════════════════════\n")
 
 let tracer = ConsoleTracer()
-let loop = CoachLoop(
-    source: SimulatedRun(),
-    llm: llm,
-    speech: speech,
-    tracer: tracer,
-    tools: [PaceTargetTool(), ComparePRTool(), WeatherTool()],
-    memory: CoachMemory(persona: persona, profile: .demo),
-    pricing: pricing
-)
+let memory = CoachMemory(persona: persona, profile: .demo)
 
-await loop.run()
+if agentic {
+    print("🧠 mode: agentic (model decides speak/silent + which tools to call)\n")
+    let apiKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"].flatMap { $0.isEmpty ? nil : $0 }
+    let agent: CoachAgent = apiKey.map { GeminiAgent(apiKey: $0) } ?? MockAgent()
+    let critic: OutputCritic = apiKey.map { LLMOutputCritic(client: GeminiClient(apiKey: $0)) } ?? NoOpCritic()
+
+    // Memory: seed a few past runs so recall_past_runs has history to surface.
+    let journal = InMemoryRunJournal(seed: [
+        RunMemory(date: Date(timeIntervalSinceNow: -7 * 86_400), distanceMeters: 5000, duration: 1680,
+                  avgPaceSecPerKm: 336, bestSplitPaceSecPerKm: 318, notes: ["Faded on the final hill"]),
+        RunMemory(date: Date(timeIntervalSinceNow: -3 * 86_400), distanceMeters: 5000, duration: 1625,
+                  avgPaceSecPerKm: 325, bestSplitPaceSecPerKm: 305, notes: ["Negative split, strong finish"]),
+    ])
+
+    let loop = AgenticCoachLoop(
+        source: SimulatedRun(),
+        agent: agent,
+        speech: speech,
+        tracer: tracer,
+        tools: AgentTools.coachDefaults + [RecallPastRunsTool(journal: journal)],
+        critic: critic,
+        journal: journal,
+        memory: memory,
+        pricing: pricing
+    )
+    await loop.run()
+} else {
+    let loop = CoachLoop(
+        source: SimulatedRun(),
+        llm: llm,
+        speech: speech,
+        tracer: tracer,
+        tools: [PaceTargetTool(), ComparePRTool(), WeatherTool()],
+        memory: memory,
+        pricing: pricing
+    )
+    await loop.run()
+}
 
 print("\n" + tracer.summary())

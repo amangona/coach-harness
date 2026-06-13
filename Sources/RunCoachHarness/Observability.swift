@@ -28,6 +28,7 @@ public struct CoachTrace: Sendable, Codable {
     public let latencyMs: Int
     public let costUSD: Double
     public let text: String?
+    public var toolCalls: [String]? = nil   // tools the model chose to call (agentic loop)
 }
 
 public protocol Tracer: AnyObject, Sendable {
@@ -51,7 +52,8 @@ public final class ConsoleTracer: Tracer, @unchecked Sendable {
         lock.unlock()
 
         let cost = String(format: "$%.6f", trace.costUSD)
-        print("  📊 t=\(trace.tick) @\(Fmt.dur(trace.elapsed)) | \(trace.trigger) → \(trace.decision)"
+        let tools = (trace.toolCalls?.isEmpty == false) ? " 🔧[\(trace.toolCalls!.joined(separator: ","))]" : ""
+        print("  📊 t=\(trace.tick) @\(Fmt.dur(trace.elapsed)) | \(trace.trigger) → \(trace.decision)\(tools)"
               + " | tok \(trace.promptTokens)+\(trace.outputTokens) | \(trace.latencyMs)ms | \(cost)")
 
         if emitJSON, let data = try? JSONEncoder().encode(trace), let json = String(data: data, encoding: .utf8) {

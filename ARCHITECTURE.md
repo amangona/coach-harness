@@ -94,7 +94,10 @@ The harness assembles a context object on every speak-decision:
 - **Coach persona** — built-in (motivational / calm-zen / drill-sergeant / friendly-pacer)
   or a **user-authored custom coach** (name, voice, free-text instructions). This is the
   customization surface.
-- **Runner profile / history** — avg distance, avg pace, best split, typical HR (last ~10 runs).
+- **Persistent run journal** — past runs (distance, pace, best split, notes like "faded on
+  the final hill") stored across launches in `RunJournal`. The runner **profile is derived
+  from it** (not hardcoded), and the agentic loop writes each finished run back, so the coach
+  accumulates knowledge over time. The model retrieves from it via the `recall_past_runs` tool.
 - **Session buffer** — the last 6 lines the coach already said this run, so it does not
   repeat openers or hooks. ("Vary your angle.")
 - **Current telemetry** — the live snapshot for this tick.
@@ -154,22 +157,76 @@ protocol TelemetrySource {
   same protocol → the existing app becomes a live telemetry adapter with **zero changes to
   the harness**. One harness, many sources.
 
+## Goals
+
+A run targets a `RunGoal` — `.distance(meters:)`, `.time(seconds:)`, or `.free`. The goal flows
+into `RunTelemetry` (`goalType` + `goalTargetMeters` / `goalTargetSeconds`), and `goalProgress`
+computes fractional completion for **distance and time**. The coach sees the goal and progress
+in its context, so it adds final-stretch urgency near a target and none on a free run. Both
+`SimulatedRun` and the live-GPS source honor the goal; the demo app's goal picker sets it.
+
 ---
 
 ## Module map
 
 | File | Pillar | Responsibility |
 |------|--------|----------------|
-| `Telemetry.swift` | (input) | `RunTelemetry` snapshot, `CoachingTrigger`, `TelemetrySource` protocol |
+| `Telemetry.swift` | (input) | `RunTelemetry` snapshot, `CoachingTrigger`, `TelemetrySource` protocol, `RunGoal` (distance / time / free) |
 | `LLM.swift` | LLM | `LLMClient` protocol, `GeminiClient` (REST + usage), `MockLLMClient` |
 | `Memory.swift` | Memory | persona + profile + rolling session buffer → context assembly |
 | `Personas.swift` | Memory | built-in personas + custom-coach model |
-| `CoachLoop.swift` | Loop | tick → derive trigger → decide → generate → speak → record |
-| `Tools.swift` | Tools | `CoachTool` protocol + sample documented tools |
+| `Journal/RunJournal.swift` | Memory | **persistent** cross-run journal, relevance recall, profile derivation |
+| `CoachLoop.swift` | Loop | deterministic: tick → trigger → one completion → speak → record |
+| `Agentic/CoachAgent.swift` | LLM+Loop | `CoachAgent` protocol, `AgentOutcome`, offline `MockAgent` |
+| `Agentic/GeminiAgent.swift` | LLM+Loop | real Gemini **function-calling**: reason → call tool → observe → repeat |
+| `Agentic/AgenticCoachLoop.swift` | Loop | model-driven: gate → agent decides (speak/silent + tools) → critic → speak |
+| `Agentic/AgentTool.swift` | Tools | model-callable tools incl. `recall_past_runs` (a real, argument-taking tool) |
+| `Tools.swift` | Tools | `CoachTool` protocol + sample context tools (deterministic loop) |
 | `Guardrails.swift` | Guardrails | input sanity + output safety/brevity/anti-repeat |
-| `Observability.swift` | Observability | `CoachTrace`, `Tracer`, token/cost/latency tallies |
+| `Guardrails+Critic.swift` | Guardrails | `OutputCritic` — optional second-opinion LLM review (the cascade tier) |
+| `Observability.swift` | Observability | `CoachTrace` (+ tool-call trail), `Tracer`, token/cost/latency tallies |
 | `TTS.swift` | (output) | `SpeechOutput` protocol + console/`say` sinks |
-| `Sources/coachd/main.swift` | — | CLI demo: wires a source + LLM + tracer and runs the loop |
+| `Voices.swift` | (output) | `GeminiVoice` catalog — TTS voice names for coach customization |
+| `Sources/coachd/main.swift` | — | CLI demo: `--agentic` runs the model-driven loop |
+
+---
+
+## Two loops, on purpose
+
+There are **two** loop implementations, and the choice is a real engineering tradeoff:
+
+- **`CoachLoop` (deterministic)** — one LLM completion per coaching moment. Predictable
+  latency and cost; the *code* assembles context and decides when to speak. This is the
+  better **product** for a real-time, on-phone coach.
+- **`AgenticCoachLoop` (model-driven)** — a cheap deterministic gate still picks *candidate*
+  moments (cost control), but at each candidate the **model** decides: call tools, then speak
+  or `stay_silent`. The `recall_past_runs` tool fetches journal history the model doesn't
+  otherwise have, so Memory + Tools + Loop compose rather than act as ceremony. This is the
+  better **demonstration of agency**.
+
+The agent's tool-call trail and the critic verdict both show up in observability.
+
+## Validated against the live API
+
+The full Gemini paths were exercised against the real `generativelanguage.googleapis.com`
+endpoint and returned 200:
+
+- **Text generation** (deterministic engine, critic, coach preview),
+- **TTS** (`gemini-2.5-flash-preview-tts`) — returns `audio/L16;codec=pcm;rate=24000`, which the
+  app wraps as WAV and plays,
+- **Function-calling round trip** — `functionCall` → tool result returned as a
+  `functionResponse` with `role:"user"` → final coaching line. This confirms `GeminiAgent`'s
+  wire format.
+
+## Honest limitations
+
+- **Recall is keyword + recency**, not embeddings — fine for a few dozen runs, not for years
+  of history.
+- **The deterministic guardrails are string/length checks**; the `LLMOutputCritic` adds a real
+  second opinion but is fail-open (it won't silence the coach if it errors).
+- **Per-moment cost/latency in the agentic loop is higher** than the deterministic loop (one
+  or more extra round trips when the model calls tools) — the cheap gate keeps it bounded, but
+  it is the tradeoff for real agency.
 
 ---
 

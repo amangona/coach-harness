@@ -7,7 +7,7 @@ import PackageDescription
 // LLM · Memory · Loop · Tools · Guardrails · Observability.
 let package = Package(
     name: "RunCoachHarness",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13), .iOS(.v17)],
     products: [
         .library(name: "RunCoachHarness", targets: ["RunCoachHarness"]),
         .executable(name: "coachd", targets: ["coachd"]),

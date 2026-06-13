@@ -12,8 +12,9 @@ public struct RunTelemetry: Sendable, Codable, Equatable {
     public var heartRateZone: String?         // "rest" | "warmUp" | "fatBurn" | "cardio" | "peak"
     public var elevationGainMeters: Double
     public var completedSplits: Int           // count of finished 1km splits
-    public var goalType: String?              // "distance" | "time" | nil
-    public var goalTargetMeters: Double?
+    public var goalType: String?              // "distance" | "time" | nil (free run)
+    public var goalTargetMeters: Double?      // for distance goals
+    public var goalTargetSeconds: Double?     // for time goals
     public var isGoalReached: Bool
     public var isFinished: Bool               // the source signals the run is over
 
@@ -28,6 +29,7 @@ public struct RunTelemetry: Sendable, Codable, Equatable {
         completedSplits: Int = 0,
         goalType: String? = nil,
         goalTargetMeters: Double? = nil,
+        goalTargetSeconds: Double? = nil,
         isGoalReached: Bool = false,
         isFinished: Bool = false
     ) {
@@ -41,14 +43,31 @@ public struct RunTelemetry: Sendable, Codable, Equatable {
         self.completedSplits = completedSplits
         self.goalType = goalType
         self.goalTargetMeters = goalTargetMeters
+        self.goalTargetSeconds = goalTargetSeconds
         self.isGoalReached = isGoalReached
         self.isFinished = isFinished
     }
 
+    /// Fractional progress toward the goal (distance or time), or nil for a free run.
     public var goalProgress: Double? {
-        guard let target = goalTargetMeters, target > 0 else { return nil }
-        return min(distanceMeters / target, 1.0)
+        switch goalType {
+        case "distance":
+            guard let target = goalTargetMeters, target > 0 else { return nil }
+            return min(distanceMeters / target, 1.0)
+        case "time":
+            guard let target = goalTargetSeconds, target > 0 else { return nil }
+            return min(elapsed / target, 1.0)
+        default:
+            return nil
+        }
     }
+}
+
+/// What the runner is aiming for this session.
+public enum RunGoal: Sendable, Equatable {
+    case free
+    case distance(meters: Double)
+    case time(seconds: TimeInterval)
 }
 
 /// Why the coach is being asked to consider speaking. Drives priority + rate-limit bypass.

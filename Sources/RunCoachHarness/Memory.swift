@@ -26,7 +26,7 @@ public struct RunnerProfile: Sendable, Codable {
 /// lines already said this run (so the coach never repeats an opener).
 public struct CoachMemory: Sendable {
     public let persona: CoachPersona
-    public let profile: RunnerProfile
+    public var profile: RunnerProfile     // refreshed from the journal at run start
     public let bufferSize: Int
     public private(set) var recentLines: [String] = []
 
@@ -69,9 +69,20 @@ public struct CoachMemory: Sendable {
         }
         lines.append("- Elevation gain: \(Int(t.elevationGainMeters)) m")
 
-        if let prog = t.goalProgress, let target = t.goalTargetMeters {
+        switch t.goalType {
+        case "distance":
+            if let target = t.goalTargetMeters, let prog = t.goalProgress {
+                lines.append("")
+                lines.append("Goal: \(Fmt.dist(target)) — \(Int(prog * 100))% complete")
+            }
+        case "time":
+            if let target = t.goalTargetSeconds, let prog = t.goalProgress {
+                lines.append("")
+                lines.append("Goal: \(Fmt.dur(target)) — \(Int(prog * 100))% complete")
+            }
+        default:
             lines.append("")
-            lines.append("Goal: \(Fmt.dist(target)) — \(Int(prog * 100))% complete")
+            lines.append("No set goal — this is a free run.")
         }
 
         lines.append("")
